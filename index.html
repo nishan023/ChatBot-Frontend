@@ -15,7 +15,9 @@
 :host {
   all: initial; color-scheme: light; font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
   font-size: 14px; line-height: 1.5; color: #18181b; text-align: left;
-  position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); z-index: 2147483000;
+  /* Leave room below the launcher for the site scroll-to-top control. */
+  --widget-bottom: max(88px, calc(env(safe-area-inset-bottom) + 76px));
+  position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: var(--widget-bottom); z-index: 2147483000;
   -webkit-font-smoothing: antialiased;
 }
 *, *::before, *::after { box-sizing: border-box; }
@@ -28,7 +30,7 @@ button:focus-visible { outline: 2px solid #18181b; outline-offset: 3px; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .icon-definitions { position: absolute; width: 0; height: 0; overflow: hidden; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
-.chat-panel { position: absolute; right: 0; bottom: 64px; width: min(420px, calc(100vw - 40px)); height: min(796px, calc(92vh - 64px)); height: min(796px, calc(92dvh - 64px)); display: flex; flex-direction: column; overflow: hidden; background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 20px 25px -5px #0000001a, 0 8px 10px -6px #0000001a; }
+.chat-panel { position: absolute; right: 0; bottom: 64px; width: min(420px, calc(100vw - 40px)); height: min(796px, calc(100vh - var(--widget-bottom) - 80px)); height: min(796px, calc(100dvh - var(--widget-bottom) - 80px)); display: flex; flex-direction: column; overflow: hidden; background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 20px 25px -5px #0000001a, 0 8px 10px -6px #0000001a; }
 .chat-header { flex-shrink: 0; padding: 16px 24px; border-bottom: 1px solid #e4e4e7; background: #fff; }
 .header-main { display: flex; align-items: center; gap: 12px; }
 .brand-mark { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #f4f4f5; border: 1px solid #e4e4e7; color: #3f3f46; }
@@ -107,8 +109,9 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 @keyframes chat-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes chat-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @media (max-width:480px) {
-  :host { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); }
-  .chat-panel { width: calc(100vw - 24px); height: min(796px, calc(100vh - 96px)); height: min(796px, calc(100dvh - 96px)); }
+  /* Clear both the mobile bottom navigation and the scroll-to-top button. */
+  :host { --widget-bottom: max(144px, calc(env(safe-area-inset-bottom) + 132px)); right: max(20px, env(safe-area-inset-right)); }
+  .chat-panel { width: calc(100vw - 40px); }
   .chat-header { padding: 16px; }
   .header-main { gap: 10px; }
   .header-title p { font-size: 11px; }
@@ -187,7 +190,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 </button>
 </template>
 <script>
-//<![CDATA[
+// Keep this script XML-safe for Blogger without CDATA wrappers.
 (() => {
   'use strict';
   const template = document.getElementById('csit-vault-template');
@@ -237,6 +240,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   let pending = null;
   let generation = 0;
   let healthGeneration = 0;
+  let healthRetryTimer;
   let lastPrompt = '';
   let serviceUnavailable = false;
   let retryIsHealthCheck = false;
@@ -269,29 +273,49 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
     $('statusDot').title = text;
   }
 
-  async function checkHealth() {
+  async function checkHealth(attempt = 0) {
+    clearTimeout(healthRetryTimer);
     const healthId = ++healthGeneration;
     const chatId = generation;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 90000);
     setStatus('Connecting…');
     try {
       const response = await fetch(apiBase + '/health', { signal: controller.signal, cache: 'no-store' });
-      if (!response.ok) throw new Error('unavailable');
-      const data = await response.json();
+      if (!response.ok) throw new Error('HTTP_' + response.status);
+      let data;
+      try { data = await response.json(); } catch { throw new Error('INVALID_RESPONSE'); }
+      if (!data || data.status !== 'OK') throw new Error('INVALID_RESPONSE');
       if (healthId !== healthGeneration || chatId !== generation) return;
       serviceUnavailable = data.apiKeyConfigured === false || ['not_configured', 'unavailable'].includes(data.aiStatus);
       setStatus(serviceUnavailable ? 'Temporarily unavailable' : data.aiStatus === 'ready' ? 'Ready to help' : 'Server connected', serviceUnavailable ? 'offline' : 'ready');
       if (serviceUnavailable) showError('The site owner needs to restore the AI connection. Please check back later.', { configuration: true });
-      if (!serviceUnavailable && retryIsHealthCheck) {
-        $('errorNotice').hidden = true;
-        retryIsHealthCheck = false;
+      if (retryIsHealthCheck) {
+        if (serviceUnavailable) {
+          $('errorText').textContent = 'The assistant is still unavailable. The site owner needs to restore the AI connection.';
+        } else {
+          $('errorNotice').hidden = true;
+          retryIsHealthCheck = false;
+        }
       }
-      if (serviceUnavailable && retryIsHealthCheck) $('errorText').textContent = 'The assistant is still unavailable. The site owner needs to restore the AI connection.';
-    } catch {
+    } catch (error) {
       if (healthId !== healthGeneration || chatId !== generation) return;
+      console.warn('CSIT Vault health check failed:', apiBase + '/health', error);
       setStatus('Connection unavailable', 'offline');
-      showError('Cannot reach ' + apiBase + '. Check that the backend is running and the API URL is correct.', { configuration: true });
+      const detail = error.name === 'AbortError'
+        ? 'The server took too long to respond. It may still be starting up.'
+        : error.message === 'INVALID_RESPONSE'
+          ? 'The connection check returned an unexpected response.'
+          : error.message.startsWith('HTTP_')
+            ? 'The connection check returned HTTP ' + error.message.slice(5) + '.'
+            : 'Your browser could not complete the connection check. This may be a temporary network issue or a request blocked by the page or browser.';
+      showError(detail + (attempt === 0 ? ' Retrying the connection check shortly. You can still try sending a question.' : ' Try sending a question or select Check connection.'), { connection: true });
+      if (attempt === 0) {
+        healthRetryTimer = setTimeout(() => {
+          if (healthId !== healthGeneration || chatId !== generation) return;
+          checkHealth(1);
+        }, 4000);
+      }
     } finally { clearTimeout(timeout); syncInput(); }
   }
 
@@ -320,7 +344,9 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
     // Keep code contents literal; remove presentation markers only from prose.
     return text.split(/(```[^\n]*\n[\s\S]*?```|`[^`\n]+`)/g).map(part => {
       if (part.startsWith('```')) return part.replace(/^```[^\n]*\n/, '').replace(/```$/, '');
-      if (part.startsWith('`') && part.endsWith('`')) return part.slice(1, -1);
+      if (part.startsWith('`')) {
+        if (part.endsWith('`')) return part.slice(1, -1);
+      }
       return part
         .replace(/\\([*_~`#])/g, '$1')
         .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
@@ -381,13 +407,13 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 
   function scrollToEnd() { $('scrollRegion').scrollTop = $('scrollRegion').scrollHeight; }
 
-  function showError(message, { retryable = false, configuration = false } = {}) {
-    $('errorTitle').textContent = configuration ? 'The assistant is taking a break' : "Couldn't get an answer";
+  function showError(message, { retryable = false, configuration = false, connection = false } = {}) {
+    $('errorTitle').textContent = configuration ? 'The assistant is taking a break' : connection ? 'Connection check interrupted' : "Couldn't get an answer";
     $('errorText').textContent = message;
     $('errorNotice').hidden = false;
-    retryIsHealthCheck = configuration;
-    $('retryButton').hidden = !retryable && !configuration;
-    $('retryButton').textContent = configuration ? 'Check connection' : 'Try again';
+    retryIsHealthCheck = configuration || connection;
+    $('retryButton').hidden = !(retryable || retryIsHealthCheck);
+    $('retryButton').textContent = retryIsHealthCheck ? 'Check connection' : 'Try again';
     $('editButton').hidden = !lastPrompt;
     serviceUnavailable = configuration;
     scrollToEnd();
@@ -397,10 +423,12 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
     if (!text.trim() || pending || serviceUnavailable) return;
     if (text.length > 4000) { toast('Please keep your question under 4,000 characters.'); return; }
     text = text.trim();
+    clearTimeout(healthRetryTimer);
+    retryIsHealthCheck = false;
     const id = ++generation;
     const controller = new AbortController();
     pending = controller;
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 90000);
     lastPrompt = text;
     $('errorNotice').hidden = true;
     $('welcomeSection').hidden = true;
@@ -437,7 +465,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
           INVALID_HISTORY: 'The conversation context is invalid. Start a new chat and try again.',
           INVALID_PROMPT: 'Please enter a question between 1 and 4,000 characters.'
         };
-        showError(messages[data.code] || 'The assistant could not answer right now. Please try again later.', { configuration, retryable: data.retryable === true || (!data.code && response.status >= 500) });
+        showError(messages[data.code] || 'The assistant could not answer right now. Please try again later.', { configuration, retryable: data.retryable === true || (data.code ? false : response.status >= 500) });
         setStatus(configuration ? 'Temporarily unavailable' : 'Answer interrupted', 'offline');
         return;
       }
@@ -484,10 +512,9 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   $('chatForm').addEventListener('submit', event => { event.preventDefault(); sendMessage(input.value); });
   input.addEventListener('input', syncInput);
   input.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      sendMessage(input.value);
-    }
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    sendMessage(input.value);
   });
   root.querySelectorAll('[data-prompt]').forEach(button => {
     button.addEventListener('click', () => {
@@ -511,7 +538,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   syncInput();
   checkHealth();
 })();
-//]]>
 </script>
 <!-- BLOGGER WIDGET END -->
 </body>
