@@ -2,11 +2,9 @@
 
 All frontend HTML, CSS, and JavaScript lives in `index.html`. No build step, external JavaScript, or separate frontend host is required. The reference font (Plus Jakarta Sans) loads from Google Fonts, with a system-font fallback. All widget CSS and JavaScript remains inline.
 
-## Local use
+## Production backend
 
-Keep your backend running on port **5500**, then open **http://localhost:5500/** and click the black chat button in the bottom-right corner. The backend already serves this directory.
-
-You can also open `index.html` directly or serve it with a local preview server on another port. Local previews always send API requests to `http://localhost:5500`.
+This branch always connects to `https://the-csit-vault-chatbot-1.onrender.com`, including when opening the HTML file directly. The API URL is fixed in `index.html`.
 
 ## Blogger
 
@@ -15,13 +13,7 @@ You can also open `index.html` directly or serve it with a local preview server 
 3. Paste into a Blogger **HTML/JavaScript gadget** and save.
 4. Open your blog and click the black chat button.
 
-On a public site, the widget defaults to `https://the-csit-vault-chatbot.onrender.com`. To change it, edit the template near the top:
-
-```html
-<template id="csit-vault-template" data-api-base="https://YOUR-BACKEND.onrender.com">
-```
-
-Use a publicly accessible HTTPS backend for Blogger visitors. Your laptop's localhost address only works locally. The URL is public configuration; keep the Gemini API key on the backend. The backend must allow requests from your blog's origin (the existing backend enables CORS).
+Keep the Gemini API key on the backend. The deployed backend must allow requests from your blog's origin.
 
 ## Behavior
 
